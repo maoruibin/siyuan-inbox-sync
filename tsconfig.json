@@ -20,5 +20,5 @@
     "jsx": "react"
   },
   "include": ["src/**/*"],
-  "exclude": ["node_modules", "dist"]
+  "exclude": ["node_modules", "dist", "node_modules/siyuan/types/constants.ts", "node_modules/siyuan/types/platformUtils.ts"]
 }

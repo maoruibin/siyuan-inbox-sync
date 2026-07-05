@@ -18,8 +18,8 @@ const options = {
   },
   legalComments: "none",
   logLevel: "info",
-  // siyuan types come from @types/siyuan via `siyuan` package; require is unused at runtime
-  external: [],
+  // siyuan 是 host 提供的运行时（types-only），打包时跳过
+  external: ["siyuan"],
 };
 
 if (production) {
