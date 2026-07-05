@@ -1,0 +1,27 @@
+{
+  "name": "siyuan-inbox-sync",
+  "version": "0.1.0",
+  "description": "Sync notes from inBox cloud (WebDAV/S3) into SiYuan.",
+  "main": "index.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "typecheck": "tsc -noEmit -skipLibCheck"
+  },
+  "keywords": ["siyuan", "plugin", "inbox", "sync", "webdav", "s3"],
+  "author": "gudong",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "esbuild": "^0.21.5",
+    "siyuan": "^1.0.6",
+    "typescript": "^5.5.2"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.600.0",
+    "@smithy/fetch-http-handler": "^5.3.16",
+    "@smithy/protocol-http": "^5.3.13",
+    "@smithy/querystring-builder": "^4.2.13",
+    "jszip": "^3.10.1"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "siyuan-inbox-sync",
+  "author": "gudong",
+  "url": "https://github.com/gudong/siyuan-inbox-sync",
+  "version": "0.1.0",
+  "minAppVersion": "3.0.0",
+  "backends": ["all"],
+  "frontends": ["desktop"],
+  "displayName": {
+    "default": "inBox Sync",
+    "zh_CN": "inBox 同步"
+  },
+  "description": {
+    "default": "One-way sync from inBox cloud (WebDAV/S3) to SiYuan.",
+    "zh_CN": "把 inBox 云端笔记单向同步到思源笔记。"
+  },
+  "readme": {
+    "default": "README.md"
+  },
+  "icon": "icon.png",
+  "i18n": ["en_US", "zh_CN"]
+}
