@@ -3,7 +3,7 @@
   "author": "gudong",
   "url": "https://github.com/maoruibin/siyuan-inbox-sync",
   "version": "0.1.0",
-  "minAppVersion": "3.0.0",
+  "minAppVersion": "3.7.0",
   "backends": ["all"],
   "frontends": ["desktop"],
   "displayName": {
@@ -18,5 +18,6 @@
     "default": "README.md"
   },
   "icon": "icon.png",
-  "i18n": ["en_US", "zh_CN"]
+  "i18n": ["en_US", "zh_CN"],
+  "keywords": ["思源", "siyuan", "inbox", "同步", "sync", "webdav", "s3", "inBox"]
 }
