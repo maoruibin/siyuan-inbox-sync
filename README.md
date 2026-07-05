@@ -20,10 +20,10 @@
 
 ### 方式 1：手动安装（推荐）
 
-1. 从 [Releases](../../releases) 下载 `package.zip`，解压后得到 `index.js`、`plugin.json`、`i18n/`、`icon.png`
-2. 在思源笔记里点 `设置 → 饥饿插件 → 浏览`，或直接打开文件管理器进入思源工作空间的 `data/plugins/` 目录
-3. 新建文件夹 `siyuan-inbox-sync/`，把解压后的所有文件放进去
-4. 重启思源或在插件市场里点 `刷新`，然后在 `设置 → 饥饿插件` 中启用 `inBox 同步`
+1. 从 [Releases](../../releases) 下载最新的 `package.zip`
+2. 在思源笔记里打开文件管理器，进入工作空间的 `data/plugins/` 目录
+3. 新建文件夹 `siyuan-inbox-sync/`，把 `package.zip` 里的所有文件解压到该目录
+4. 重启思源或在 `设置 → 饥饿插件` 中点 `刷新`，然后启用 `inBox 同步`
 
 ### 方式 2：从源码构建
 
@@ -31,10 +31,10 @@
 git clone https://github.com/maoruibin/siyuan-inbox-sync.git
 cd siyuan-inbox-sync
 npm install
-npm run build
+npm run package     # 一键构建 + 打包成 package.zip
 ```
 
-构建产物（`index.js` + `plugin.json` + `i18n/`）复制到 `data/plugins/siyuan-inbox-sync/` 即可。
+把生成的 `package.zip` 解压到 `data/plugins/siyuan-inbox-sync/` 即可。开发时可以用 `npm run dev` watch 模式 + 软链到插件目录。
 
 ## 使用
 
@@ -106,15 +106,15 @@ inBox 云端（WebDAV / S3）
 - `[[note-xxx]]` 笔记间链接暂未转换为思源块引用，正文里以纯文本展示
 - 父笔记的批注引用块在重复 sync 时会累积（v2 会加自动清理）
 - 桌面端思源优先；移动端有 CORS 限制，可能需要走 `/api/network/forwardProxy`（未实现）
-- 没有内置 icon.png / preview.png（发布前需补）
 
 ## 开发
 
 ```bash
 npm install
-npm run dev      # watch 模式
-npm run build    # 产出 index.js
-npm run typecheck
+npm run dev        # watch 模式
+npm run build      # 类型检查 + 产出 index.js
+npm run package    # build + 打成 package.zip（思源集市格式）
+npm run typecheck  # 仅类型检查
 ```
 
 调试技巧：把项目根软链到思源工作空间的 `data/plugins/siyuan-inbox-sync/`，每次 `npm run build` 后在思源里 `重新加载`。
