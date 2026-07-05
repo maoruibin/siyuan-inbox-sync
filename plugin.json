@@ -1,7 +1,7 @@
 {
   "name": "siyuan-inbox-sync",
   "author": "gudong",
-  "url": "https://github.com/gudong/siyuan-inbox-sync",
+  "url": "https://github.com/maoruibin/siyuan-inbox-sync",
   "version": "0.1.0",
   "minAppVersion": "3.0.0",
   "backends": ["all"],
