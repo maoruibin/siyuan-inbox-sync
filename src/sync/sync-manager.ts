@@ -16,7 +16,7 @@ import {
 export type SyncNotify = (message: string) => void;
 
 /**
- * 同步协调器
+ * 同步协调器（单向：云端 → 思源）
  * 增量策略（参考 Android ThinkPlus）：
  * 1. listNotes() 拿云端 ETag/MTime 元数据，不下载内容
  * 2. 对比 metadata → ETag 相同则跳过
@@ -99,6 +99,7 @@ export class SyncManager {
     };
 
     try {
+      console.log("[Sync] === sync() 被调用，开始同步流程 ===");
       notify?.("开始同步...");
 
       // 1. 加载本地 metadata
@@ -107,6 +108,25 @@ export class SyncManager {
       // 2. 拉 boxes.json 构建 boxId → name
       const boxNameMap = await this.buildBoxNameMap();
       this.noteParser.setBoxNameMap(boxNameMap);
+      console.log(
+        `[Sync][BOX] 注入 parser 的 boxNameMap (${boxNameMap.size} 个):`,
+        Array.from(boxNameMap.entries()).map(([id, name]) => `${id}=${name}`)
+      );
+
+      // 2.5 对账盒子文件夹（rename / dissolve / 新增登记），失败不阻断主同步
+      console.log(
+        `[Sync][BOX] 对账前 metadata.boxFolders:`,
+        metadata.boxFolders ? JSON.stringify(metadata.boxFolders) : "(空)"
+      );
+      try {
+        await this.reconcileBoxFolders(metadata, boxNameMap, notify);
+        console.log(
+          `[Sync][BOX] 对账后 metadata.boxFolders:`,
+          JSON.stringify(metadata.boxFolders)
+        );
+      } catch (err) {
+        console.warn("[Sync][BOX] 盒子对账失败, 继续主流程:", err);
+      }
 
       // 3. 列云端清单
       notify?.("扫描云端文件...");
@@ -114,7 +134,7 @@ export class SyncManager {
 
       // 4. 增量对比
       const { toDownload, toDelete, unchanged } = this.diffCloudAndLocal(cloudFiles, metadata);
-      console.debug(`[Sync] 增量: 下载 ${toDownload.length}, 删除 ${toDelete.length}, 跳过 ${unchanged}`);
+      console.log(`[Sync] 增量: 下载 ${toDownload.length}, 删除 ${toDelete.length}, 跳过 ${unchanged}`);
 
       // 5. 处理云端删除
       if (toDelete.length > 0) {
@@ -155,6 +175,9 @@ export class SyncManager {
         try {
           notify?.(`处理笔记 ${++processed}/${allNotes.size}...`);
           const parsed = this.noteParser.parse(atomicNote);
+          console.log(
+            `[Sync][BOX] 第1轮 ${processed}/${allNotes.size} noteId=${noteId} boxId=${parsed.boxId ?? "(无)"} boxName=${parsed.boxName ?? "(无)"} isRemoved=${parsed.isRemoved} title=${JSON.stringify(parsed.title ?? "")}`
+          );
 
           if (parsed.isRemoved) {
             const old = metadata.lastSyncMeta[noteId];
@@ -167,7 +190,7 @@ export class SyncManager {
           }
 
           const existingDocId = metadata.lastSyncMeta[noteId]?.docId;
-          const result = await this.writer.writeNote(parsed, existingDocId);
+          const result = await this.writer.writeNote(parsed, metadata.boxFolders ?? {}, existingDocId);
 
           noteIdToDocId.set(parsed.noteId, result.docId);
           if (parsed.blockId) {
@@ -249,7 +272,7 @@ export class SyncManager {
 
       const elapsed = ((Date.now() - stats.startTime) / 1000).toFixed(1);
       notify?.(`同步完成！新增 ${stats.newNotes}, 更新 ${stats.updatedNotes}, 删除 ${stats.deletedNotes}, 跳过 ${unchanged} (${elapsed}s)`);
-      console.debug(`[Sync] 完成 (${elapsed}s) — 新增 ${stats.newNotes} 更新 ${stats.updatedNotes} 删除 ${stats.deletedNotes} 失败 ${stats.failedNotes}`);
+      console.log(`[Sync] 完成 (${elapsed}s) — 新增 ${stats.newNotes} 更新 ${stats.updatedNotes} 删除 ${stats.deletedNotes} 失败 ${stats.failedNotes}`);
     } catch (err) {
       if (signal.aborted) {
         notify?.("同步已取消");
@@ -329,19 +352,113 @@ export class SyncManager {
     }
   }
 
+  /**
+   * 盒子文件夹对账：
+   * - boxFolders 有，boxNameMap 没 → 盒子被删墓碑 → dissolveBoxFolder + 移回根
+   * - 两边都有但 name 不同 → 盒子改名 → renameBoxFolder
+   * - boxNameMap 有，boxFolders 没 → 新盒子 → 登记到 boxFolders（暂不建空文件夹）
+   *
+   * 调用方负责保存 metadata（boxFolders 在 metadata 上原地修改）。
+   */
+  private async reconcileBoxFolders(
+    metadata: SyncMetadata,
+    boxNameMap: Map<string, string>,
+    notify?: SyncNotify
+  ): Promise<void> {
+    if (!metadata.boxFolders) metadata.boxFolders = {};
+    const boxFolders = metadata.boxFolders;
+    console.log(
+      `[Sync][BOX] reconcile 开始: boxFolders keys=${Object.keys(boxFolders).length}, boxNameMap keys=${boxNameMap.size}`
+    );
+
+    // 1. rename + dissolve
+    for (const boxId of Object.keys(boxFolders)) {
+      const oldName = boxFolders[boxId];
+      const newName = boxNameMap.get(boxId);
+
+      if (!newName) {
+        notify?.(`盒子 "${oldName}" 已删除, 移回根目录...`);
+        console.log(`[Sync][BOX] 盒子 ${boxId} 已删除, dissolve ${oldName}`);
+        try {
+          await this.writer.dissolveBoxFolder(boxId, oldName);
+          console.log(`[Sync][BOX] dissolve 成功: ${boxId} (${oldName})`);
+        } catch (err) {
+          console.warn(`[Sync][BOX] dissolve 失败 ${boxId}:`, err);
+        }
+        delete boxFolders[boxId];
+        continue;
+      }
+
+      if (oldName !== newName) {
+        notify?.(`盒子改名: ${oldName} → ${newName}...`);
+        console.log(`[Sync][BOX] 盒子 ${boxId} 改名: ${oldName} → ${newName}`);
+        try {
+          await this.writer.renameBoxFolder(boxId, oldName, newName, boxFolders);
+          boxFolders[boxId] = newName;
+          console.log(`[Sync][BOX] rename 成功: ${boxId} → ${newName}`);
+        } catch (err) {
+          console.warn(`[Sync][BOX] rename 失败 ${boxId}:`, err);
+        }
+      } else {
+        console.log(`[Sync][BOX] 盒子 ${boxId} 名称未变: ${oldName}`);
+      }
+    }
+
+    // 2. 新增登记（不预先建空文件夹，等有笔记落到这个 boxId 时 writeNote 自然创建）
+    console.log(
+      `[Sync][BOX] 检查新增盒子: boxNameMap=${Array.from(boxNameMap.entries()).map(
+        ([id, name]) => `${id}=${name}`
+      )}, 已登记 boxFolders=${JSON.stringify(boxFolders)}`
+    );
+    for (const [boxId, name] of boxNameMap.entries()) {
+      if (!boxFolders[boxId]) {
+        boxFolders[boxId] = this.writer.ensureUniqueBoxFolderName(name, boxId, boxFolders);
+        console.log(
+          `[Sync][BOX] 新增盒子登记: ${boxId} → 文件夹名="${boxFolders[boxId]}" (原始名="${name}")`
+        );
+      } else {
+        console.log(`[Sync][BOX] 盒子已登记, 跳过: ${boxId} → ${boxFolders[boxId]}`);
+      }
+    }
+    console.log(`[Sync][BOX] reconcile 结束: 最终 boxFolders=${JSON.stringify(boxFolders)}`);
+  }
+
   private async buildBoxNameMap(): Promise<Map<string, string>> {
     const map = new Map<string, string>();
     try {
       const manifest = await this.cloudClient.downloadBoxesManifest();
-      if (!manifest || !Array.isArray(manifest.boxes)) return map;
+      if (!manifest || !Array.isArray(manifest.boxes)) {
+        console.warn(
+          `[Sync][BOX] boxes.json 拉取异常: manifest=${manifest ? "存在但 boxes 非数组" : "null/undefined"}`
+        );
+        return map;
+      }
+      console.log(
+        `[Sync][BOX] boxes.json 原始 ${manifest.boxes.length} 个:`,
+        manifest.boxes.map((b) => ({
+          box_id: b.box_id,
+          name: b.name,
+          deleted_at: b.deleted_at,
+          include_in_home: b.include_in_home,
+        }))
+      );
       for (const box of manifest.boxes) {
-        if (!box.box_id || !box.name) continue;
-        if (box.deleted_at != null) continue;
+        if (!box.box_id || !box.name) {
+          console.warn(`[Sync][BOX] 跳过无效盒子项:`, box);
+          continue;
+        }
+        if (box.deleted_at != null) {
+          console.log(`[Sync][BOX] 跳过墓碑盒子: ${box.box_id} (${box.name}) deleted_at=${box.deleted_at}`);
+          continue;
+        }
         map.set(box.box_id, box.name);
       }
-      console.debug(`[Sync] 盒子清单: ${map.size} 个有效`);
+      console.log(
+        `[Sync][BOX] 盒子清单有效 ${map.size} 个:`,
+        Array.from(map.entries()).map(([id, name]) => `${id}=${name}`)
+      );
     } catch (err) {
-      console.warn("[Sync] 拉 boxes.json 失败:", err);
+      console.warn("[Sync][BOX] 拉 boxes.json 失败:", err);
     }
     return map;
   }

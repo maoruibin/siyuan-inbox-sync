@@ -77,6 +77,7 @@ export async function openSettingsDialog(plugin: InboxSyncPlugin): Promise<void>
 
   <div style="margin-top: 24px; display: flex; gap: 8px; justify-content: flex-end;">
     <button class="b3-button b3-button--outline" id="inbox-test-conn">测试连接</button>
+    <button class="b3-button b3-button--outline" id="inbox-sync-now">立即同步</button>
     <button class="b3-button b3-button--text" id="inbox-cancel">取消</button>
     <button class="b3-button b3-button--outline" id="inbox-save">保存</button>
   </div>
@@ -135,6 +136,14 @@ export async function openSettingsDialog(plugin: InboxSyncPlugin): Promise<void>
       btn.textContent = original;
       btn.disabled = false;
     }
+  });
+
+  // 立即同步
+  root.querySelector("#inbox-sync-now")?.addEventListener("click", async () => {
+    const next = collectForm(root);
+    await plugin.updateSettings(next);
+    dialog.destroy();
+    await plugin.syncNow();
   });
 }
 

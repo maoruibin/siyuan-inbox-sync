@@ -1,4 +1,4 @@
-import { Plugin, showMessage } from "siyuan";
+import { Dialog, Plugin, showMessage } from "siyuan";
 import { InboxSyncSettings, DEFAULT_SETTINGS } from "./types/settings";
 import { SyncManager } from "./sync/sync-manager";
 import { MetadataStorage } from "./storage/metadata-storage";
@@ -37,7 +37,7 @@ export default class InboxSyncPlugin extends Plugin {
       title: "inBox 同步",
       position: "right",
       callback: () => {
-        void this.syncNow();
+        this.showTopBarMenu();
       },
     });
   }
@@ -47,9 +47,6 @@ export default class InboxSyncPlugin extends Plugin {
     this.stopAutoSync();
   }
 
-  /**
-   * 打开设置面板（思源调用）
-   */
   openSetting(): void {
     void openSettingsDialog(this);
   }
@@ -61,13 +58,10 @@ export default class InboxSyncPlugin extends Plugin {
     this.startAutoSyncIfNeeded();
   }
 
-  /**
-   * 立即同步
-   */
   async syncNow(): Promise<void> {
     if (!this.validateSettings()) return;
     if (this.isSyncing) {
-      showMessage("正在同步中...", 2000, "info");
+      showMessage("正在同步中，请稍候", 2000, "info");
       return;
     }
     if (!this.syncManager) {
@@ -76,37 +70,71 @@ export default class InboxSyncPlugin extends Plugin {
     }
 
     this.isSyncing = true;
-    showMessage("开始从 inBox 同步...", 0, "info");
+    showMessage("开始从 inBox 同步…", 2000, "info");
+    console.debug("[inBox Sync] sync started");
 
     try {
       const stats = await this.syncManager.sync((msg) => {
-        showMessage(msg, 0, "info");
+        console.debug("[inBox Sync] " + msg);
       });
 
       if (stats.failedNotes === 0 && stats.failedAssets === 0) {
-        showMessage(
-          `同步完成：新增 ${stats.newNotes}, 更新 ${stats.updatedNotes}, 删除 ${stats.deletedNotes}, 跳过 ${stats.skippedNotes}`,
-          5000,
-          "info"
-        );
+        const parts: string[] = [
+          `新增 ${stats.newNotes}`,
+          `更新 ${stats.updatedNotes}`,
+          `删除 ${stats.deletedNotes}`,
+          `跳过 ${stats.skippedNotes}`,
+        ];
+        showMessage(`同步完成：${parts.join("，")}`, 4000, "info");
       } else {
         showMessage(
-          `同步结束（有错误）：失败笔记 ${stats.failedNotes}, 失败资源 ${stats.failedAssets}`,
-          10_000,
+          `同步结束（有错误）：失败笔记 ${stats.failedNotes}，失败资源 ${stats.failedAssets}（详见控制台）`,
+          6000,
           "error"
         );
         console.error("[inBox Sync] errors:", stats.errors);
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      showMessage(`同步失败：${msg}`, 10_000, "error");
+      showMessage(`同步失败：${msg}`, 6000, "error");
       console.error("[inBox Sync] failed:", err);
     } finally {
       this.isSyncing = false;
     }
   }
 
-  // ============ 私有 ============
+  private showTopBarMenu(): void {
+    const dialog = new Dialog({
+      title: "inBox 同步",
+      content: `
+<div class="b3-dialog__content" style="padding: 24px; display: flex; flex-direction: column; gap: 12px;">
+  <button class="b3-button b3-button--outline fn__block" id="inbox-action-sync" style="padding: 10px;">
+    <svg><use xlink:href="#iconRefresh"></use></svg> 立即同步
+  </button>
+  <button class="b3-button b3-button--outline fn__block" id="inbox-action-settings" style="padding: 10px;">
+    <svg><use xlink:href="#iconSettings"></use></svg> 打开设置
+  </button>
+  <button class="b3-button b3-button--text fn__block" id="inbox-action-cancel" style="padding: 10px;">
+    取消
+  </button>
+</div>
+`,
+      width: "320px",
+    });
+
+    const el = dialog.element;
+    el.querySelector("#inbox-action-sync")?.addEventListener("click", () => {
+      dialog.destroy();
+      void this.syncNow();
+    });
+    el.querySelector("#inbox-action-settings")?.addEventListener("click", () => {
+      dialog.destroy();
+      void openSettingsDialog(this);
+    });
+    el.querySelector("#inbox-action-cancel")?.addEventListener("click", () => {
+      dialog.destroy();
+    });
+  }
 
   private validateSettings(): boolean {
     if (this.settings.storageType === "webdav") {
@@ -144,9 +172,6 @@ export default class InboxSyncPlugin extends Plugin {
   }
 }
 
-/**
- * 给 settings-dialog.ts 用：拉笔记本清单
- */
 export async function fetchNotebooks(): Promise<{ id: string; name: string }[]> {
   return listNotebooks().then((list) => list.map((nb) => ({ id: nb.id, name: nb.name })));
 }

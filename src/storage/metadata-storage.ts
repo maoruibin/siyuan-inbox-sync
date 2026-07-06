@@ -21,8 +21,16 @@ export class MetadataStorage {
   async load(): Promise<SyncMetadata> {
     try {
       const data = (await this.storage.loadData(META_FILE)) as Record<string, unknown> | null;
-      if (data && this.isValid(data)) {
-        return data as unknown as SyncMetadata;
+      if (data && typeof data === "object") {
+        // 迁移：旧元数据没有 boxFolders 字段，补空对象
+        const meta = data as unknown as SyncMetadata;
+        if (!meta.boxFolders) {
+          meta.boxFolders = {};
+          console.debug("[Meta] 迁移: 补 boxFolders 空对象");
+        }
+        if (this.isValid(data)) {
+          return meta;
+        }
       }
     } catch (err) {
       console.warn("[Meta] 加载元数据失败:", err);

@@ -5,6 +5,8 @@ import {
   createDocWithMd,
   deleteBlock,
   getBlockAttrs,
+  listDocsByBoxId,
+  moveDocToPath,
   removeDoc,
   setBlockAttrs,
 } from "../utils/siyuan-api";
@@ -18,6 +20,10 @@ export interface WriteNoteResult {
  * 写入 atomicNote 到思源文档
  * 策略：更新时删旧建新（重新解析 markdown 最稳；块级更新容易留残块）
  * 盒子作为 custom-box 属性；无盒子不写
+ *
+ * 盒子分文件夹由 SyncManager 通过 metadata.boxFolders 驱动：
+ * - note.boxId 在 boxFolders 里查到 → /{basePath}/{boxFolder}/{title}
+ * - 否则 → /{basePath}/{title}（根平铺）
  */
 export class SiYuanWriter {
   private settings: InboxSyncSettings;
@@ -41,11 +47,19 @@ export class SiYuanWriter {
 
   /**
    * 写入或更新一条笔记
+   * @param boxFolders boxId → 文件夹名映射（来自 metadata，SyncManager 在 reconcileBoxFolders 后灌入）
    * @param existingDocId 已有的 docId（来自 metadata），传 undefined 表示新建
    */
-  async writeNote(note: ParsedNote, existingDocId?: string): Promise<WriteNoteResult> {
+  async writeNote(
+    note: ParsedNote,
+    boxFolders: Record<string, string>,
+    existingDocId?: string
+  ): Promise<WriteNoteResult> {
     const displayTitle = this.getDisplayTitle(note);
-    const docPath = this.buildDocPath(displayTitle);
+    const docPath = this.buildDocPath(displayTitle, note, boxFolders);
+    console.log(
+      `[Writer][BOX] writeNote noteId=${note.noteId} boxId=${note.boxId ?? "(无)"} boxName=${note.boxName ?? "(无)"} → path="${docPath}" | existingDocId=${existingDocId ?? "(无)"}`
+    );
 
     // 删旧建新：existingDocId 存在就先删
     let isNew = true;
@@ -63,6 +77,9 @@ export class SiYuanWriter {
 
     // 创建文档
     const docId = await createDocWithMd(this.settings.siyuanNotebookId, docPath, markdown);
+    console.log(
+      `[Writer][BOX] createDocWithMd 完成 noteId=${note.noteId} → docId=${docId} path="${docPath}"`
+    );
 
     // 设置 custom 属性
     await this.setDocAttributes(docId, note, displayTitle);
@@ -243,14 +260,119 @@ export class SiYuanWriter {
 
   /**
    * 构建思源文档路径
-   * 笔记本下，可选 basePath（如 "/inBox"），再拼文件名
-   * 形如 "/inBox/2024-01-01 标题"
+   * - note.boxId 在 boxFolders 里能查到 → /{basePath}/{boxFolder}/{title}
+   * - 否则（无盒子 / 盒子被删墓碑 / boxFolders 还没登记）→ /{basePath}/{title}（根平铺）
+   *
+   * boxFolders 由 SyncManager 在 reconcileBoxFolders 阶段已清洗 + 撞名处理，这里直接信任。
    */
-  private buildDocPath(displayTitle: string): string {
-    const sanitized = this.sanitizeFileName(displayTitle);
+  private buildDocPath(
+    displayTitle: string,
+    note: ParsedNote,
+    boxFolders: Record<string, string>
+  ): string {
+    const sanitizedTitle = this.sanitizeFileName(displayTitle);
     const base = this.settings.siyuanBasePath?.trim() || "";
     const normalizedBase = base.replace(/^\/+|\/+$/g, "");
-    return normalizedBase ? `/${normalizedBase}/${sanitized}` : `/${sanitized}`;
+
+    const boxFolder = note.boxId ? boxFolders[note.boxId] : undefined;
+    console.log(
+      `[Writer][BOX] buildDocPath noteId=${note.noteId} boxId=${note.boxId ?? "(无)"} boxName=${note.boxName ?? "(无)"} base="${normalizedBase}" boxFolder=${boxFolder ? `"${boxFolder}"` : "(无,根平铺)"}`
+    );
+
+    if (note.boxId && boxFolder) {
+      const parts = normalizedBase
+        ? [normalizedBase, boxFolder, sanitizedTitle]
+        : [boxFolder, sanitizedTitle];
+      return "/" + parts.join("/");
+    }
+    return normalizedBase
+      ? `/${normalizedBase}/${sanitizedTitle}`
+      : `/${sanitizedTitle}`;
+  }
+
+  /**
+   * 撞名检测：清洗后的文件夹名跟其他 boxId 撞 → 追加 boxId 短码后缀
+   * 纯字符串处理，不创建文档。SyncManager 在 reconcileBoxFolders 阶段调。
+   */
+  ensureUniqueBoxFolderName(
+    rawName: string,
+    boxId: string,
+    boxFolders: Record<string, string>
+  ): string {
+    const sanitized = this.sanitizeFolderName(rawName) || boxId;
+    const existing = new Set(
+      Object.entries(boxFolders)
+        .filter(([id]) => id !== boxId)
+        .map(([, name]) => name)
+    );
+    if (existing.has(sanitized)) {
+      const shortId = boxId.replace(/^box-/, "").slice(0, 8);
+      const unique = `${sanitized}-${shortId}`;
+      console.warn(`[Writer] 盒子名 "${rawName}" 撞已有文件夹, 改为 "${unique}"`);
+      return unique;
+    }
+    return sanitized;
+  }
+
+  /**
+   * 盒子改名：把该 boxId 下所有文档 move 到新路径 + 同步 custom-box 属性
+   * 思源没有"重命名文件夹"操作，只能逐文档 move
+   *
+   * 撞名处理：新名字如果跟其他 boxId 撞，先 ensureUniqueBoxFolderName 加后缀
+   */
+  async renameBoxFolder(
+    boxId: string,
+    oldFolderName: string,
+    newFolderName: string,
+    boxFolders: Record<string, string>
+  ): Promise<void> {
+    const notebook = this.settings.siyuanNotebookId;
+    const base = this.settings.siyuanBasePath?.trim().replace(/^\/+|\/+$/g, "") ?? "";
+    const safeNewName = this.ensureUniqueBoxFolderName(newFolderName, boxId, boxFolders);
+    const newPath = base ? `/${base}/${safeNewName}` : `/${safeNewName}`;
+
+    const docs = await listDocsByBoxId(notebook, boxId);
+    console.log(
+      `[Writer] renameBoxFolder: ${boxId} ${oldFolderName}→${safeNewName}, ${docs.length} 个文档`
+    );
+
+    for (const doc of docs) {
+      try {
+        const finalPath = `${newPath}/${this.sanitizeFileName(doc.title)}`;
+        await moveDocToPath(doc.docId, finalPath, notebook);
+        await setBlockAttrs(doc.docId, { "custom-box": safeNewName });
+      } catch (err) {
+        console.warn(`[Writer] renameBoxFolder 移动失败: ${doc.docId} (${doc.title})`, err);
+      }
+    }
+  }
+
+  /**
+   * 盒子被 deleted_at 墓碑：把该 boxId 下所有文档 move 回根 + 清 custom-box 属性
+   * 思源不需要删空文件夹 — 路径下没文档自然消失
+   *
+   * 关键决策：custom-inbox-box-id 保留作为反查锚（盒子撤销删除时可恢复），只清 custom-box
+   */
+  async dissolveBoxFolder(boxId: string, oldFolderName: string): Promise<void> {
+    const notebook = this.settings.siyuanNotebookId;
+    const base = this.settings.siyuanBasePath?.trim().replace(/^\/+|\/+$/g, "") ?? "";
+    const rootPath = base ? `/${base}` : "/";
+
+    const docs = await listDocsByBoxId(notebook, boxId);
+    console.log(
+      `[Writer] dissolveBoxFolder: ${boxId} (${oldFolderName}), ${docs.length} 个文档`
+    );
+
+    for (const doc of docs) {
+      try {
+        const finalPath = `${rootPath}/${this.sanitizeFileName(doc.title)}`;
+        await moveDocToPath(doc.docId, finalPath, notebook);
+        // custom-inbox-box-id 保留作反查锚，只清 custom-box
+        await setBlockAttrs(doc.docId, { "custom-box": "" });
+      } catch (err) {
+        console.warn(`[Writer] dissolveBoxFolder 移动失败: ${doc.docId} (${doc.title})`, err);
+      }
+    }
   }
 
   private sanitizeFileName(name: string): string {
@@ -260,5 +382,14 @@ export class SiYuanWriter {
       .replace(/\s+/g, " ")
       .trim()
       .substring(0, 100);
+  }
+
+  private sanitizeFolderName(name?: string): string {
+    if (!name) return "";
+    return name
+      .replace(/[<>:"/\\|?*]/g, "-")
+      .replace(/\s+/g, " ")
+      .trim()
+      .substring(0, 50);
   }
 }

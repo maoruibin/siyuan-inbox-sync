@@ -4,6 +4,7 @@ import type {
   S3Client as S3ClientType,
   ListObjectsV2Command as ListObjectsV2CommandCtor,
   GetObjectCommand as GetObjectCommandCtor,
+  PutObjectCommand as PutObjectCommandCtor,
   ListObjectsV2CommandInput,
   _Object as S3Object,
 } from "@aws-sdk/client-s3";
@@ -13,15 +14,17 @@ import { FetchHttpHandler } from "@smithy/fetch-http-handler";
 let S3ClientClass: typeof S3ClientType | undefined;
 let ListObjectsV2Command: typeof ListObjectsV2CommandCtor | undefined;
 let GetObjectCommand: typeof GetObjectCommandCtor | undefined;
+let PutObjectCommand: typeof PutObjectCommandCtor | undefined;
 
 async function getAWSSDK() {
-  if (!S3ClientClass || !ListObjectsV2Command || !GetObjectCommand) {
+  if (!S3ClientClass || !ListObjectsV2Command || !GetObjectCommand || !PutObjectCommand) {
     const sdk = await import("@aws-sdk/client-s3");
     S3ClientClass = sdk.S3Client;
     ListObjectsV2Command = sdk.ListObjectsV2Command;
     GetObjectCommand = sdk.GetObjectCommand;
+    PutObjectCommand = sdk.PutObjectCommand;
   }
-  return { S3ClientClass, ListObjectsV2Command, GetObjectCommand };
+  return { S3ClientClass, ListObjectsV2Command, GetObjectCommand, PutObjectCommand };
 }
 
 /**
@@ -165,6 +168,7 @@ export class S3Client implements CloudClient {
     }
   }
 
+  /**
   async listNotes(): Promise<CloudFileInfo[]> {
     const notesPrefix = this.getObjectKey("notes/");
     const files: CloudFileInfo[] = [];

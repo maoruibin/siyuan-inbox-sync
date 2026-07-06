@@ -8,7 +8,7 @@ const options = {
   entryPoints: ["src/index.ts"],
   bundle: true,
   platform: "browser",
-  format: "iife",
+  format: "cjs",
   target: "es2020",
   outfile: "index.js",
   sourcemap: !production ? "inline" : false,

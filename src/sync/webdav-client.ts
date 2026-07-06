@@ -47,9 +47,17 @@ export class WebDAVClient implements CloudClient {
     body?: string
   ): Promise<{ status: number; text: string }> {
     const url = this.getFullUrl(path);
+    // 给所有请求加 no-cache，绕过坚果云等 WebDAV 服务的 GET 缓存
+    // 否则下载笔记 JSON 时可能拿到旧的 is_removed=true 版本
+    const finalHeaders = {
+      "Cache-Control": "no-cache",
+      "Pragma": "no-cache",
+      ...headers,
+      Authorization: this.authHeader(),
+    };
     const res = await httpRequest(url, {
       method,
-      headers: { ...headers, Authorization: this.authHeader() },
+      headers: finalHeaders,
       body,
       raw: true,
     });
@@ -129,6 +137,10 @@ export class WebDAVClient implements CloudClient {
       return null;
     }
   }
+
+  /**
+   * 上传原子笔记（覆盖 note-xxx.json）
+   * 思源 PUT 直接写 body，Content-Type: application/json
 
   async listNotes(): Promise<CloudFileInfo[]> {
     const files: CloudFileInfo[] = [];

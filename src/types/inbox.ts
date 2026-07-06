@@ -247,6 +247,8 @@ export interface SyncMetadata {
   lastSyncTime: number;     // 最后同步时间（毫秒）
   lastSyncMeta: Record<string, NoteSyncMeta>;  // noteId -> {etag, mtime}
   version: string;          // 元数据格式版本
+  /** boxId → 文件夹名（用于盒子对账 rename / dissolve） */
+  boxFolders?: Record<string, string>;
 }
 
 /**
@@ -257,7 +259,7 @@ export interface SyncStats {
   newNotes: number;
   updatedNotes: number;
   skippedNotes: number;
-  deletedNotes: number;     // 删除的笔记数
+  deletedNotes: number;     // 删除的笔记数（云端拉下来的）
   failedNotes: number;
   totalAssets: number;
   downloadedAssets: number;

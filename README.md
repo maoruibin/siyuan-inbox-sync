@@ -1,20 +1,29 @@
 # inBox Sync for SiYuan
 
-把 [inBox](https://inbox.gudong.site) 笔记单向同步到 [思源笔记](https://b3log.org/siyuan/) 的插件。
+把 [inBox](https://inbox.gudong.site) 笔记**单向同步**到 [思源笔记](https://b3log.org/siyuan/) 的插件。
 
 支持 WebDAV / S3 兼容存储，增量同步、资源（图片/录音/附件）、批注、盒子（作为文档自定义属性）。
 
-> 跟同名的 [Obsidian 插件](https://github.com/maoruibin/obsidian-inbox-sync) 共用同一套同步协议，本文档针对思源笔记。
+> inBox 是"收集箱"，编辑和删除交给桌面端做。插件只读云端，不在思源里修改云端数据。
+> 跟同名的 [Obsidian 插件](https://github.com/maoruibin/obsidian-inbox-sync) 共用同一套同步协议。
 
 ## 功能
 
-- **单向同步**：inBox 云端 → 思源笔记本，只读不写回
+- **单向同步（云端 → 思源）**：只下载不上传
+  - inBox App 是收集端，思源是工作台
+  - 在思源里编辑/删除文档不会回传到云端
+  - 不支持在思源里新建笔记（新笔记请在 inBox App 创建）
 - **多存储后端**：WebDAV / S3（含 Bitiful、腾讯云 COS、阿里 OSS 等 S3 兼容服务）
 - **增量同步**：基于 ETag + mtime，未变化的笔记直接跳过
 - **资源同步**：图片、视频、录音、附件，落到 `data/assets/inbox-sync/`
 - **批注支持**：ver=2 内联批注渲染为父笔记末尾的 blockquote；带 `parentId` 的独立批注作为父笔记末尾的块引用
-- **盒子归属**：作为文档自定义属性 `custom-box`，可在思源属性面板查看
+- **盒子分文件夹**：笔记按盒子归到 `/{盒子名}/` 子文档下，无盒子进根目录平铺。盒子改名/删除时自动对账（批量 move 文档到新路径 + 同步 `custom-box`）
 - **笔记间链接**：保留 inBox 原文 `[[note-xxx]]`（v1 以纯文本展示，块级转换在 v2 实现）
+
+### 删除语义
+
+- 在 inBox App 删除笔记 → 云端 `flags.is_removed=true` → 插件下次同步时移除思源对应文档
+- 在思源里删文档 → **不影响云端**（单向，思源是只读副本）
 
 ## 安装
 
@@ -101,10 +110,42 @@ inBox 云端（WebDAV / S3）
 
 更新策略：**删旧建新**。每次更新会移除旧文档、用最新 markdown 重新创建（思源的块树会重新解析）。文档 ID 会变，但 `custom-inbox-id` 保持稳定，增量元数据里也记录最新 docId。
 
-## 已知限制（v1）
+## 文档树结构
 
+同步后的思源笔记本按盒子组织（v0.3+）：
+
+```
+{笔记本}/
+├── inBox/                         # 子路径（可在设置里改）
+│   ├── 默认笔记.md                # 无盒子笔记(根平铺)
+│   ├── 工作/                      # "工作"盒子下所有笔记
+│   │   ├── project-xxx.md
+│   │   └── meeting-notes.md
+│   └── 生活/                      # "生活"盒子
+│       └── shopping.md
+└── assets/inbox-sync/             # 资源(所有盒子共享, 不按盒子分)
+```
+
+**盒子文件夹规则：**
+
+- 笔记 `content.box_id` 在云端 `boxes.json` 里查到 → 进 `<盒子名>/` 子文档
+- 否则（无盒子 / 盒子被删墓碑 / boxes.json 为空）→ 根平铺
+- 盒子在 inBox App 改名 → 该 boxId 下所有文档 move 到新路径 + 同步更新 `custom-box`
+- 盒子在 inBox App 删除（deleted_at 墓碑）→ 该 boxId 下所有文档 move 回根 + 清 `custom-box`
+- `custom-inbox-box-id` **永远保留**（作为反查锚，即使盒子删除也不清，便于撤销恢复）
+- 资源统一放 `data/assets/inbox-sync/`，不按盒子分
+
+**盒子名清洗规则：** `/ \ : * ? " < > |` 替换为 `-`，空名 fallback 到 boxId 短码，撞名追加 boxId 短码后缀（如 `工作-boxabc12`）。
+
+**对账时机：** 每次同步开始时，`SyncManager` 会拉云端 `boxes.json` 跟本地 `metadata.boxFolders` 对比，按需批量 move 文档。对账失败不阻断主同步流程（仅打 warn）。
+
+## 已知限制
+
+- **不支持在思源里新建笔记**：新建请在 inBox App 完成，插件只同步已有 noteId 的笔记
+- **不支持回传**：在思源里编辑/删除文档不会影响云端（单向同步）
+- **盒子管理**：盒子的创建/重命名/删除需在 inBox App 完成（插件只读 boxes.json），但插件会自动对账 App 端的盒子改名/删除（批量 move 文档到新路径）
 - `[[note-xxx]]` 笔记间链接暂未转换为思源块引用，正文里以纯文本展示
-- 父笔记的批注引用块在重复 sync 时会累积（v2 会加自动清理）
+- 父笔记的批注引用块在重复 sync 时会累积（v3 会加自动清理）
 - 桌面端思源优先；移动端有 CORS 限制，可能需要走 `/api/network/forwardProxy`（未实现）
 
 ## 开发

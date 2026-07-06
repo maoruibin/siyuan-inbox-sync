@@ -79,10 +79,28 @@ export function renameDoc(docId: string, title: string): Promise<void> {
 }
 
 /**
- * 通过路径移动文档
+ * 通过 docId 移动文档到指定路径
+ * 思源 moveDocs 的 fromPaths 期望路径数组（hpath），docId 内部容忍但不保证未来版本兼容，
+ * 这里先用 SQL 把 docId 转成 hpath 再传，更稳妥。
  */
-export function moveDocsById(fromId: string, toPath: string, notebook: string): Promise<void> {
-  return callApi("api/filetree/moveDocs", { fromPaths: [fromId], toNotebook: notebook, toPath }).then(() => undefined);
+export async function moveDocToPath(
+  docId: string,
+  toPath: string,
+  notebook: string
+): Promise<void> {
+  const hpath = await getDocPath(docId);
+  await callApi("api/filetree/moveDocs", {
+    fromPaths: [hpath],
+    toNotebook: notebook,
+    toPath,
+  });
+}
+
+/** 通过 SQL 拿文档的 hpath（人类可读路径） */
+async function getDocPath(docId: string): Promise<string> {
+  const stmt = `SELECT hpath FROM blocks WHERE type='d' AND id='${docId.replace(/'/g, "''")}' LIMIT 1`;
+  const rows = await callApi<Array<{ hpath: string }>>("api/query/sql", { stmt });
+  return rows[0]?.hpath ?? `/${docId}`;
 }
 
 // ============ 块操作 ============
@@ -214,6 +232,97 @@ export async function queryDocsByCustomAttr(key: string, value: string): Promise
   const stmt = `SELECT id, type, content FROM blocks WHERE type = 'd' AND \`${key}\` = '${value.replace(/'/g, "''")}' LIMIT 10`;
   const rows = await callApi<BlockRow[]>("api/query/sql", { stmt });
   return rows;
+}
+
+/**
+ * 上传阶段需要扫描的 inBox 文档信息
+ * updated: 思源块的更新时间（秒级时间戳字符串，h12:34:56 形式或纯数字）
+ */
+export interface InboxDocInfo {
+  docId: string;
+  noteId: string;
+  title: string;
+  updated: string;
+  boxName?: string;
+  boxId?: string;
+  parentId?: string;
+  tags?: string;
+  inboxCreated?: string;
+  inboxUpdated?: string;
+}
+
+/**
+ * 一次性扫描笔记本下所有带 custom-inbox-id 的文档
+ * 用于上传阶段对比本地 updated vs metadata 里记录的基线，识别本地变化
+ */
+export async function listAllInboxDocs(notebookId: string): Promise<InboxDocInfo[]> {
+  const stmt = `SELECT b.id AS doc_id, b.content AS title, b.updated,
+    a_inbox.value AS inbox_id,
+    a_box.value AS box_name,
+    a_box_id.value AS inbox_box_id,
+    a_parent.value AS inbox_parent,
+    a_tags.value AS inbox_tags,
+    a_created.value AS inbox_created,
+    a_updated.value AS inbox_updated
+    FROM blocks b
+    JOIN attributes a_inbox ON a_inbox.block_id = b.id AND a_inbox.name = 'custom-inbox-id'
+    LEFT JOIN attributes a_box ON a_box.block_id = b.id AND a_box.name = 'custom-box'
+    LEFT JOIN attributes a_box_id ON a_box_id.block_id = b.id AND a_box_id.name = 'custom-inbox-box-id'
+    LEFT JOIN attributes a_parent ON a_parent.block_id = b.id AND a_parent.name = 'custom-inbox-parent'
+    LEFT JOIN attributes a_tags ON a_tags.block_id = b.id AND a_tags.name = 'custom-inbox-tags'
+    LEFT JOIN attributes a_created ON a_created.block_id = b.id AND a_created.name = 'custom-inbox-created'
+    LEFT JOIN attributes a_updated ON a_updated.block_id = b.id AND a_updated.name = 'custom-inbox-updated'
+    WHERE b.type = 'd' AND b.box = '${notebookId.replace(/'/g, "''")}'`;
+
+  const rows = await callApi<Record<string, unknown>[]>("api/query/sql", { stmt });
+  return rows.map((r) => ({
+    docId: String(r.doc_id ?? ""),
+    noteId: String(r.inbox_id ?? ""),
+    title: String(r.title ?? ""),
+    updated: String(r.updated ?? ""),
+    boxName: r.box_name ? String(r.box_name) : undefined,
+    boxId: r.inbox_box_id ? String(r.inbox_box_id) : undefined,
+    parentId: r.inbox_parent ? String(r.inbox_parent) : undefined,
+    tags: r.inbox_tags ? String(r.inbox_tags) : undefined,
+    inboxCreated: r.inbox_created ? String(r.inbox_created) : undefined,
+    inboxUpdated: r.inbox_updated ? String(r.inbox_updated) : undefined,
+  }));
+}
+
+/**
+ * 导出文档为 markdown 字符串
+ * 用于上传阶段拿思源文档的最新内容
+ */
+export async function exportDocMarkdown(docId: string): Promise<string> {
+  const data = await callApi<{ content: string }>("api/export/exportMdContent", { id: docId });
+  return data.content || "";
+}
+
+export interface BoxDocInfo {
+  docId: string;
+  title: string;
+  hpath: string;
+}
+
+/**
+ * 查指定 boxId 下的所有文档（用于盒子 rename/dissolve 批量操作）
+ * 走 custom-inbox-box-id 属性反查，比 listAllInboxDocs 全表扫更快
+ */
+export async function listDocsByBoxId(
+  notebookId: string,
+  boxId: string
+): Promise<BoxDocInfo[]> {
+  const stmt = `SELECT b.id AS doc_id, b.content AS title, b.hpath
+    FROM blocks b
+    JOIN attributes a ON a.block_id = b.id AND a.name = 'custom-inbox-box-id'
+    WHERE b.type = 'd' AND b.box = '${notebookId.replace(/'/g, "''")}'
+    AND a.value = '${boxId.replace(/'/g, "''")}'`;
+  const rows = await callApi<Record<string, unknown>[]>("api/query/sql", { stmt });
+  return rows.map((r) => ({
+    docId: String(r.doc_id ?? ""),
+    title: String(r.title ?? ""),
+    hpath: String(r.hpath ?? ""),
+  }));
 }
 
 /**

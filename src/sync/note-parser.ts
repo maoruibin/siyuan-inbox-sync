@@ -54,6 +54,9 @@ export class NoteParser {
 
     // 解析盒子归属
     const { boxId, boxName } = this.resolveBox(note.content?.box_id, note.content?.box);
+    console.log(
+      `[Parser][BOX] noteId=${note.id} resolveBox 结果: boxId=${boxId ?? "(无)"} boxName=${boxName ?? "(无)"}`
+    );
 
     // 分类资源
     const parsedImages: ParsedAsset[] = [];
@@ -132,32 +135,56 @@ export class NoteParser {
   ): { boxId?: string; boxName?: string } {
     const cleanedId = boxId?.trim() || undefined;
     const cleanedName = legacyBoxName?.trim() || undefined;
+    console.log(
+      `[Parser][BOX] resolveBox 输入: boxId=${boxId ?? "(无)"} legacyBoxName=${legacyBoxName ?? "(无)"} | cleanedId=${cleanedId ?? "(无)"} cleanedName=${cleanedName ?? "(无)"}`
+    );
+    console.log(
+      `[Parser][BOX] boxNameMap 当前:`,
+      this.boxNameMap.size > 0
+        ? Array.from(this.boxNameMap.entries()).map(([id, n]) => `${id}=${n}`)
+        : "(空)"
+    );
 
     // 历史默认盒子按"无盒子"
     if (cleanedId && NoteParser.LEGACY_NO_BOX_IDS.has(cleanedId)) {
+      console.log(`[Parser][BOX] 命中历史默认 box_id (${cleanedId}) → 无盒子`);
       return {};
     }
     if (!cleanedId && cleanedName && NoteParser.LEGACY_NO_BOX_NAMES.has(cleanedName)) {
+      console.log(`[Parser][BOX] 命中历史默认 box name "${cleanedName}" → 无盒子`);
       return {};
     }
 
     if (cleanedId) {
       const mappedName = this.boxNameMap.get(cleanedId);
       if (mappedName) {
+        console.log(
+          `[Parser][BOX] box_id 在清单中命中: ${cleanedId} → "${mappedName}"`
+        );
         return { boxId: cleanedId, boxName: mappedName };
       }
       // box_id 存在但清单里查不到（清单缺失/盒子已删）→ 退回旧名称；都没有就不写
       if (cleanedName && !NoteParser.LEGACY_NO_BOX_NAMES.has(cleanedName)) {
+        console.warn(
+          `[Parser][BOX] box_id=${cleanedId} 不在清单中, 用旧名称 "${cleanedName}" 兜底`
+        );
         return { boxId: cleanedId, boxName: cleanedName };
       }
+      console.warn(
+        `[Parser][BOX] box_id=${cleanedId} 不在清单中且无旧名称 → 无盒子`
+      );
       return {};
     }
 
     // 只有旧名称字段
     if (cleanedName && !NoteParser.LEGACY_NO_BOX_NAMES.has(cleanedName)) {
+      console.log(
+        `[Parser][BOX] 只有旧名称 "${cleanedName}"（无 box_id）`
+      );
       return { boxName: cleanedName };
     }
 
+    console.log(`[Parser][BOX] 无 box_id 也无有效旧名称 → 无盒子`);
     return {};
   }
 
